@@ -37,7 +37,7 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> connectMQTT() async {
-    client = MqttServerClient('your_raspberry_ip', '');
+    client = MqttServerClient('192.168.0.186', '');
     client.port = 1883;
     client.logging(on: false);
     client.onConnected = () => print('Connected to MQTT');
