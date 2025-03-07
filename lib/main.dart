@@ -1,22 +1,24 @@
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:process_run/process_run.dart';
 
 void main() {
-  runBackend();
+  runBackend(); // Chạy backend khi mở app
   runApp(MyApp());
 }
 
+// Hàm khởi động backend
 void runBackend() async {
-  String backendPath =
-      "backend/app.py"; // Đường dẫn backend trong dự án Flutter
-
-  if (Platform.isWindows) {
-    Process.start("python", [backendPath], mode: ProcessStartMode.detached);
-  } else {
-    Process.start("python3", [backendPath], mode: ProcessStartMode.detached);
-  }
+  String scriptPath = "backend/backend.py"; // Đường dẫn file backend.py
+  Process.start('python3', [scriptPath])
+      .then((Process process) {
+        print("Backend started with PID: ${process.pid}");
+      })
+      .catchError((e) {
+        print("Failed to start backend: $e");
+      });
 }
 
 class MyApp extends StatefulWidget {
@@ -25,44 +27,66 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  double _sliderValue = 0;
-  final String serverIp = "127.0.0.1"; // Chạy backend trên cùng máy
+  late MqttServerClient client;
+  double sliderValue = 0.0;
 
-  Future<void> sendPWM(double value) async {
+  @override
+  void initState() {
+    super.initState();
+    connectMQTT();
+  }
+
+  Future<void> connectMQTT() async {
+    client = MqttServerClient('your_raspberry_ip', '');
+    client.port = 1883;
+    client.logging(on: false);
+    client.onConnected = () => print('Connected to MQTT');
+    client.onDisconnected = () => print('Disconnected from MQTT');
+
+    final connMessage = MqttConnectMessage()
+        .withClientIdentifier('FlutterClient')
+        .startClean()
+        .withWillQos(MqttQos.atLeastOnce);
+    client.connectionMessage = connMessage;
+
     try {
-      await http.post(
-        Uri.parse("http://$serverIp:5000/set_pwm"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"duty_cycle": value * 100}),
-      );
+      await client.connect();
     } catch (e) {
-      print("Không kết nối được với Backend!");
+      print('Connection failed: $e');
+      client.disconnect();
     }
+  }
+
+  void sendMessage(double value) {
+    final builder = MqttClientPayloadBuilder();
+    builder.addString(value.toString());
+    client.publishMessage('slider/value', MqttQos.atMostOnce, builder.payload!);
+    print("Sent: $value%");
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: Text("Điều khiển GPIO bằng Slider")),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text("Điện áp: ${(_sliderValue * 3.3).toStringAsFixed(2)}V"),
-              Slider(
-                value: _sliderValue,
-                min: 0,
-                max: 1,
-                onChanged: (value) {
-                  setState(() {
-                    _sliderValue = value;
-                    sendPWM(value);
-                  });
-                },
-              ),
-            ],
-          ),
+        appBar: AppBar(title: Text('PWM Control via MQTT')),
+        body: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text("Adjust Voltage: ${sliderValue.toStringAsFixed(1)}%"),
+            Slider(
+              value: sliderValue,
+              min: 0,
+              max: 100,
+              divisions: 100,
+              label: sliderValue.toStringAsFixed(1),
+              onChanged: (double value) {
+                setState(() {
+                  sliderValue = value;
+                });
+                sendMessage(value);
+              },
+            ),
+          ],
         ),
       ),
     );
